@@ -1,0 +1,99 @@
+Parameters:
+  Tag:
+    Type: String
+    Default: ReverseDemoLambda
+  InvokeLambdaApiARN:
+    Type: String
+    Default: "arn:aws:iam::715071973530:role/QuandaGoLambdaAPI"
+  InvokeLambdaApiARNAlternative:
+    Type: String
+    Default: "arn:aws:iam::425664993946:role/QuandaGoLambdaAPI"
+  LambdaName:
+    Type: String
+    Default: interactionsMeterReadingLambda
+  TenantGuid:
+    Type: String
+
+Resources:
+  ## lambda API role
+  LambdaAssumeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Condition:
+              StringLike:
+                "sts:RoleSessionName":
+                  - !Sub "${TenantGuid}"
+            Principal:
+              AWS:
+                - !Sub "${InvokeLambdaApiARN}"
+                - !Sub "${InvokeLambdaApiARNAlternative}"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "AllowLambdaInvoke"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                  - "lambda:InvokeAsync"
+                  - "lambda:ListFunctions"
+                Resource: !GetAtt LambdaFunction.Arn
+
+  ## specific lambda part ##
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: !Sub "${LambdaName}-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:CreateLogGroup"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${LambdaName}*:*"
+  LambdaFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn:
+      - LambdaExecutionRole
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      FunctionName: !Ref LambdaName
+      MemorySize: 256
+      Timeout: 30
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Code:
+        ZipFile: |
+          def lambda_handler(event,context):
+            metric = int(event.measurement)
+            return { 'accepted':isReasonableMetric(metric)}
+            
+            
+          def isReasonableMetric(metric):
+            if metric < 1000 or metric > 9000:
+              return False
+            return True
+      Description: "the example lambda of QuandaGo interactions"
+  LambdaLoggroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaName}"
