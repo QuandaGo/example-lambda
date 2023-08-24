@@ -1,0 +1,224 @@
+Parameters:
+  Tag:
+    Type: String
+    Default: LookupDemoLambda
+  InvokeLambdaApiARN:
+    Type: String
+    Default: "arn:aws:iam::715071973530:role/QuandaGoLambdaAPI"
+  LambdaName:
+    Type: String
+    Default: interactionsLookupLambda
+
+
+Resources:
+  ## lambda API role
+  LambdaAssumeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS:
+                - !Sub "${InvokeLambdaApiARN}"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "AllowLambdaInvoke"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                  - "lambda:InvokeAsync"
+                  - "lambda:ListFunctions"
+                Resource: !GetAtt LambdaFunction.Arn
+
+
+  ## specific lambda part
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: !Sub "${LambdaName}-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:CreateLogGroup"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${LambdaName}*:*"
+  LambdaFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn: [LambdaExecutionRole,RestApi]
+    Properties:
+      Role: !GetAtt LambdaExecutionRole.Arn
+      FunctionName: !Ref LambdaName
+      MemorySize: 256
+      Timeout: 30
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Environment:
+        Variables:
+          API_URL: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/v0/"
+      Code:
+        ZipFile: |
+            import os
+            import urllib.request
+            import json
+            import random
+            
+            destUrl = os.getenv("API_URL")
+            def lambda_handler(event,context):
+              choice = random.randint(1,3)
+              if choice == 1:
+                response  = urllib.request.urlopen(destUrl + "/test-customer-1")
+                data = response.read()
+                return json.loads(data.decode('utf-8'))
+              if choice == 2:
+                response  = urllib.request.urlopen(destUrl + "/test-customer-2")
+                data = response.read()
+                return json.loads(data.decode('utf-8'))
+              if choice == 3:
+                response  = urllib.request.urlopen(destUrl + "/test-customer-3")
+                data = response.read()
+                return json.loads(data.decode('utf-8'))
+              return "error"
+      Description: "the example lambda of QuandaGo interactions"
+  LambdaLoggroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaName}"
+
+  ## integration api part ##
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: A fake api to test your lambda with
+      Mode: overwrite
+      FailOnWarnings: true
+      Name: "QuandaGoTestApi"
+
+  RestStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref RestDeployment
+      Description: "Mock API Stage v0"
+      RestApiId: !Ref RestApi
+      StageName: 'v0'
+  RestDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RestMethod1
+      - RestMethod2
+      - RestMethod3
+    Properties:
+      Description: "a deployment for the mock api of QuandaGo interactions"
+      RestApiId: !Ref RestApi
+
+  RestResource1:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: 'test-customer-1'
+  RestResource2:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: 'test-customer-2'
+  RestResource3:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: 'test-customer-3'
+
+  RestMethod1:
+    Type: "AWS::ApiGateway::Method"
+    DependsOn: RestApi
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref RestResource1
+      ApiKeyRequired: false
+      HttpMethod: GET
+      AuthorizationType: NONE
+      OperationName: mock
+      MethodResponses:
+        - StatusCode: "200"
+      Integration:
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        Type: MOCK
+        ConnectionType: INTERNET
+        TimeoutInMillis:  4000
+        IntegrationResponses:
+          - StatusCode: 200
+            SelectionPattern: '\d{3}'
+            ResponseTemplates:
+              "application/json": '{"customer":"bob","phone":"+31123456789","error":false}'
+
+  RestMethod2:
+    Type: AWS::ApiGateway::Method
+    DependsOn: RestApi
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref RestResource2
+      ApiKeyRequired: false
+      HttpMethod: GET
+      AuthorizationType: NONE
+      OperationName: mock
+      MethodResponses:
+        - StatusCode: "200"
+      Integration:
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        Type: MOCK
+        ConnectionType: INTERNET
+        TimeoutInMillis:  4000
+        IntegrationResponses:
+          - StatusCode: 200
+            SelectionPattern: '\d{3}'
+            ResponseTemplates:
+              "application/json": '{"customer":"","phone":"","error":true}'
+
+  RestMethod3:
+    Type: AWS::ApiGateway::Method
+    DependsOn: RestApi
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref RestResource3
+      ApiKeyRequired: false
+      HttpMethod: GET
+      AuthorizationType: NONE
+      OperationName: mock
+      MethodResponses:
+        - StatusCode: "200"
+      Integration:
+        RequestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        Type: MOCK
+        ConnectionType: INTERNET
+        TimeoutInMillis:  4000
+        IntegrationResponses:
+          - StatusCode: 200
+            SelectionPattern: '\d{3}'
+            ResponseTemplates:
+              "application/json": '{"customer":"unkown","phone":"unfiltered_sentinal_value","error":false}'
+
